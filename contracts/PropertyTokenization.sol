@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: MIT
 
 pragma solidity ^0.8.0;
+import "hardhat/console.sol";
+
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+
+
+interface IPropertyNFT {
+   function setBalanceFor(address, address) external ;
+}
 
 
 contract PropertyTokenization is Ownable {
@@ -18,39 +25,35 @@ contract PropertyTokenization is Ownable {
 
     string public propetyName;
     string public propetySymbol;
+    uint256 public tokenId;
     uint256 public propetyTotalSupply;
     uint256 public saleTimer;
     bool public saleState = false;
     address[] public holders;
-    address[] public paymentMethods;
+    mapping (uint256 => address) public properties;
 
 
     event TokenTransfer(address indexed _from, address indexed _to, uint256 _value);
     event TokenApproval(address indexed _owner, address indexed _spender, uint256 _value);
 
-    constructor(string memory name_, string memory symbol_, uint256 totalSupply_) Ownable() {
-        propetyName = name_;
-        propetySymbol = symbol_;
-        propetyTotalSupply = totalSupply_;
-        _cBalance[address(this)] = totalSupply_;
-        saleState = true;
+    constructor(
+        string memory _name, 
+        string memory _symbol, 
+        uint256 _totalSupply, 
+        uint256 _tokenId,
+        bool _saleState
+    ) Ownable() {
+        propetyName = _name;
+        propetySymbol = _symbol;
+        propetyTotalSupply = _totalSupply;
+        _cBalance[address(this)] = _totalSupply;
+        tokenId = _tokenId;
+        saleState = _saleState;
+        properties[tokenId] = _msgSender();
     }
 
     function holdersLength() public view virtual returns (uint256){
         return holders.length;
-    }
-
-    function addPaymentMethod(address newPaymentMethod) public onlyOwner returns (bool success){
-        require(newPaymentMethod != address(0), "Invalid address");
-        for(uint256 i = 0; i < paymentMethodLength(); i++){
-            require(paymentMethods[i] != newPaymentMethod, "Duplicate Payment Method");
-        }
-        paymentMethods.push(newPaymentMethod);
-        return true;
-    }
-
-    function paymentMethodLength() public view virtual returns (uint256){
-        return paymentMethods.length;
     }
 
     function updateSaleTimer(uint256 time) external onlyOwner{
@@ -62,15 +65,21 @@ contract PropertyTokenization is Ownable {
         saleState = !saleState;
     }
 
-    function buyToken(uint256 _amount, address _buyWithToken ) public virtual returns (bool success){
+    function buyToken(uint256 _amount, address _to, address _buyWithToken ) external virtual returns (bool success){
         // require(saleTimer > block.timestamp,"Crowdsale is ended");
         require(_amount > 0 && _amount <= propetyTotalSupply, "Invalid amount");
-        for(uint256 i = 0; i < paymentMethodLength(); i++){
-            if(paymentMethods[i] == _buyWithToken){
-                _transfercBalance(address(this), _msgSender(), _amount);
-                return true;
-            }
-        }
+        // for(uint256 i = 0; i < paymentMethodLength(); i++){
+        //     if(paymentMethods[i] == _buyWithToken){
+        //         _cBalance[address(this)] -= _amount;
+        //         _cBalance[_msgSender()] += _amount;
+        //         return true;
+        //     }
+        // }
+        IPropertyNFT propertyToken = IPropertyNFT(properties[tokenId]);
+        propertyToken.setBalanceFor(_to, address(this));
+        _cBalance[address(this)] -= _amount;
+        _cBalance[_to] += _amount;
+        return true;
     }
 
     function balanceOf(address account) public view virtual returns (uint256) {
@@ -85,7 +94,8 @@ contract PropertyTokenization is Ownable {
     function claimToken(uint256 _value) external {
         require(cBalanceOf(_msgSender()) > 0,"Nothing to claim");
         // require(saleTimer < block.timestamp,"Time not finished yet");
-        _transfer(address(this), _msgSender(), _value);
+        _balances[ _msgSender()] += _value;
+        _cBalance[_msgSender()] -= _value;
     }
 
     function tokenTransfer(address _to, uint256 _value) public returns (bool success){
@@ -114,13 +124,9 @@ contract PropertyTokenization is Ownable {
         return _allowances[_owner][_spender];
     }
 
-    function _transfercBalance(address from, address to, uint256 value) internal {
-        _cBalance[from] -= value;
-        _cBalance[to] += value;
-        emit TokenTransfer(from, to, value);
-    }
-
     function _transfer(address from, address to, uint256 value) internal {
+        IPropertyNFT propertyToken = IPropertyNFT(properties[tokenId]);
+        propertyToken.setBalanceFor(to, address(this));
         _balances[from] -= value;
         _balances[to] += value;
         holders.push(to);
