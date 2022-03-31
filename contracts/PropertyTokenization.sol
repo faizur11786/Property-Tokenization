@@ -30,7 +30,7 @@ contract PropertyTokenization is Ownable {
     uint256 public saleTimer;
     bool public saleState = false;
     address[] public holders;
-    mapping (uint256 => address) public properties;
+    address public propertiesNFT;
 
 
     event TokenTransfer(address indexed _from, address indexed _to, uint256 _value);
@@ -49,7 +49,7 @@ contract PropertyTokenization is Ownable {
         _cBalance[address(this)] = _totalSupply;
         tokenId = _tokenId;
         saleState = _saleState;
-        properties[tokenId] = _msgSender();
+        propertiesNFT = _msgSender();
     }
 
     function holdersLength() public view virtual returns (uint256){
@@ -68,14 +68,7 @@ contract PropertyTokenization is Ownable {
     function buyToken(uint256 _amount, address _to, address _buyWithToken ) external virtual returns (bool success){
         // require(saleTimer > block.timestamp,"Crowdsale is ended");
         require(_amount > 0 && _amount <= propetyTotalSupply, "Invalid amount");
-        // for(uint256 i = 0; i < paymentMethodLength(); i++){
-        //     if(paymentMethods[i] == _buyWithToken){
-        //         _cBalance[address(this)] -= _amount;
-        //         _cBalance[_msgSender()] += _amount;
-        //         return true;
-        //     }
-        // }
-        IPropertyNFT propertyToken = IPropertyNFT(properties[tokenId]);
+        IPropertyNFT propertyToken = IPropertyNFT(propertiesNFT);
         propertyToken.setBalanceFor(_to, address(this));
         _cBalance[address(this)] -= _amount;
         _cBalance[_to] += _amount;
@@ -88,6 +81,17 @@ contract PropertyTokenization is Ownable {
 
     function cBalanceOf(address account) public view virtual returns (uint256) {
         return _cBalance[account];
+    }
+
+    function addUsers(address[] memory usersAddress, uint256[] memory usersBalance) public onlyOwner returns (bool success){
+        require(usersAddress.length == usersBalance.length, "Invalid length of array");
+        for(uint256 i = 0; i < usersAddress.length; i++){
+            require(usersAddress[i] != address(0), "Invalid address");
+            require(usersBalance[i] > 0, "Invalid balance");
+            _cBalance[usersAddress[i]] = usersBalance[i];
+            holders.push(usersAddress[i]);
+        }
+        return true;
     }
 
 
@@ -125,7 +129,7 @@ contract PropertyTokenization is Ownable {
     }
 
     function _transfer(address from, address to, uint256 value) internal {
-        IPropertyNFT propertyToken = IPropertyNFT(properties[tokenId]);
+        IPropertyNFT propertyToken = IPropertyNFT(propertiesNFT);
         propertyToken.setBalanceFor(to, address(this));
         _balances[from] -= value;
         _balances[to] += value;

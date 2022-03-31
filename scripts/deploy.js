@@ -3,28 +3,40 @@
 //
 // When running the script with `npx hardhat run <script>` you'll find the Hardhat
 // Runtime Environment's members available in the global scope.
-const hre = require("hardhat");
+const hre = require( "hardhat" );
+const paymentAddress = require( "./paymentMethods.json" )
 
-async function main() {
-  // Hardhat always runs the compile task when running scripts with its command
-  // line interface.
-  //
-  // If this script is run directly using `node` you may want to call compile
-  // manually to make sure everything is compiled
-  // await hre.run('compile');
+async function main () {
+  printStars();
+  console.log( "Deploying the PropertyNFT Contract...", );
+  printStars();
+  const PropertyNFT = await hre.ethers.getContractFactory( "PropertyNFT" )
+  console.error( "Deploying..." );
+  printStars();
+  const propertyNFT = await PropertyNFT.deploy()
+  await propertyNFT.deployed()
+  console.log( "Contract successfully Deployed at:", propertyNFT.address )
+  printStars();
+  console.log( "\nAdding Payment Methods" );
+  await propertyNFT.addPaymentMethod( paymentAddress )
+  // printStars()
+  console.log( `Payment methods added ${await propertyNFT.paymentMethodLength()}` );
 
-  // We get the contract to deploy
-  const Greeter = await hre.ethers.getContractFactory("Greeter");
-  const greeter = await Greeter.deploy("Hello, Hardhat!");
 
-  await greeter.deployed();
+  // const PropertyNFT = await hre.ethers.getContractFactory( "PropertyNFT" );
+  // const propertyNFT = await PropertyNFT.deploy();
+  // console.log( "Contract deployed" );
+  // await propertyNFT.deployed();
+  // console.log( "Greeter deployed at:", propertyNFT.address );
+}
 
-  console.log("Greeter deployed to:", greeter.address);
+function printStars () {
+  console.log( "\n*****************************************************" );
 }
 
 // We recommend this pattern to be able to use async/await everywhere
 // and properly handle errors.
-main().catch((error) => {
-  console.error(error);
+main().catch( ( error ) => {
+  console.error( error );
   process.exitCode = 1;
-});
+} );
