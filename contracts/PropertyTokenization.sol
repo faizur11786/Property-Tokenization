@@ -21,22 +21,11 @@ contract PropertyTokenization is Ownable {
     mapping(address => uint256) private _balances;
 
     mapping(address => uint256) private _cBalance;
+    mapping (address => mapping(address => uint256)) private _allowances;
 
     uint256 public referralCount;
-
-
-    AggregatorV3Interface internal maticPriceFeed;
-
-
-    struct Referral {
-        address referrer;
-        uint256 amount;
-    }
-
-    mapping (address => mapping(address => uint256)) private _allowances;
-    mapping (address => Referral[]) public referrals;
-    mapping (address => uint256) public referralCountOf;
-    mapping (address => uint256) public referralAmountOf;
+    mapping (address => uint256) public referrals;
+    mapping (uint256 => address) public referraredBy;
 
     string public propetyName;
     string public propetySymbol;
@@ -48,6 +37,9 @@ contract PropertyTokenization is Ownable {
     bool public saleState = false;
     address[] public holders;
     address public propertiesNFT;
+    IERC20 private aQR =  IERC20(0xaE204EE82E60829A5850FE291C10bF657AF1CF02);
+    IERC20 private uSDT = IERC20(0xc2132D05D31c914a87C6611C10748AEb04B58e8F);
+
 
     event TokenTransfer(address indexed _from, address indexed _to, uint256 _value);
     event TokenApproval(address indexed _owner, address indexed _spender, uint256 _value);
@@ -61,7 +53,6 @@ contract PropertyTokenization is Ownable {
         address _propOwner, /* if you want to make someone owner of that property || _msgSender() */
         bool _saleState /* true = sale, false = not sale */
     ) Ownable() {
-        maticPriceFeed = AggregatorV3Interface(0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada);
         propetyName = _name;
         propetySymbol = _symbol;
         propetyTotalSupply = _totalSupply;
@@ -74,17 +65,6 @@ contract PropertyTokenization is Ownable {
         if(owner() != _propOwner){
             transferOwnership(_propOwner);
         }
-    }
-
-    function getPrice() public view returns(uint256){
-        (,int256 answer,,,) = maticPriceFeed.latestRoundData();
-         return uint256(answer * 10000000000);
-    }
-
-    function getConversionRate(uint256 maticAmount) public view returns (uint256){
-        uint256 ethPrice = getPrice(); // 262784346 ;
-        uint256 maticAmountInUsd = (ethPrice * maticAmount) / 1000000000000000000;
-        return maticAmountInUsd;
     }
 
     function tokenPrice() public view returns (uint256) {
@@ -112,18 +92,44 @@ contract PropertyTokenization is Ownable {
         // require(saleTimer > block.timestamp,"Crowdsale is ended");
         require(_msgSender() == propertiesNFT, "Only owner can buy tokens");
         require(_amount > 0 && _amount <= availableSupply, "Invalid amount");
+        require(_to != address(0), "Invalid address");
         _cBalance[address(this)] -= _amount;
         _cBalance[_to] += _amount;
         availableSupply = availableSupply.sub(_amount);
+        addReferral(_to, _amount);
         success = true;
     }
 
-    function addReferral(address _referralToken, uint256 _amount) public returns(bool success) {
-        referralCount++;
-        referralCountOf[_msgSender()] = referralCountOf[_msgSender()] + 1;
-        referralAmountOf[_msgSender()] = referralAmountOf[_msgSender()] + _amount;
-        referrals[_msgSender()].push(Referral(_referralToken, _amount));
+    function addReferral(address _referrer, uint256 _amount) internal returns(bool success) {
+        if(referrals[_referrer] == 0 ){
+            referralCount++;
+            referraredBy[referralCount] = _referrer;
+            referrals[_referrer] = _amount;
+            return true;
+        } 
+        referrals[_referrer] += _amount;
         return true;
+    }
+
+    function claimReferral() external {
+        require(referrals[_msgSender()] > 0, "Nothing to claim");
+        if(referrals[_msgSender()] < 50000){
+            uSDT.transfer(_msgSender(), (referrals[_msgSender()]).div(100));
+            aQR.transfer(_msgSender(), (referrals[_msgSender()]).mul(5).div(1000));
+        }
+        else if(referrals[_msgSender()] > 50000 && referrals[_msgSender()] <= 100000){
+            uSDT.transfer(_msgSender(), (referrals[_msgSender()]).mul(2).div(100));
+            aQR.transfer(_msgSender(), (referrals[_msgSender()]).div(100));
+        }
+        else if(referrals[_msgSender()] >= 100001 && referrals[_msgSender()] < 250000){
+            uSDT.transfer(_msgSender(), (referrals[_msgSender()]).mul(25).div(1000));
+            aQR.transfer(_msgSender(), (referrals[_msgSender()]).mul(15).div(1000));
+        }
+        else if(referrals[_msgSender()] >= 250000 ){
+            uSDT.transfer(_msgSender(), (referrals[_msgSender()]).mul(3).div(100));
+            aQR.transfer(_msgSender(), (referrals[_msgSender()]).mul(2).div(100));
+        }
+        referrals[msg.sender] = 0;
     }
 
 
@@ -148,11 +154,11 @@ contract PropertyTokenization is Ownable {
     }
 
 
-    function claimToken(uint256 _value) external {
+    function claimToken() external {
         require(cBalanceOf(_msgSender()) > 0,"Nothing to claim");
         // require(saleTimer < block.timestamp,"Time not finished yet");
-        _balances[ _msgSender()] += _value;
-        _cBalance[_msgSender()] -= _value;
+        _balances[ _msgSender()] += _cBalance[_msgSender()];
+        _cBalance[_msgSender()] = 0;
     }
 
     function tokenTransfer(address _to, uint256 _value) public returns (bool success){

@@ -16,7 +16,6 @@ import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 interface IPropertyToken {
     function buyToken(
         uint256,
-        address,
         address
     ) external payable returns (bool);
 
@@ -168,7 +167,7 @@ contract PropertyNFT is Ownable {
             uint256 inMatic = totalUSD.div(ethPrice);
             require (inMatic <= msg.value && (ethPrice * msg.value).div(1e18) >= totalUSD, "Inadequate MATIC sent");
 
-            propertyToken.buyToken{value:msg.value}(_amount, _msgSender(), _buyWithToken);
+            propertyToken.buyToken{value:msg.value}(_amount, _msgSender());
             
             balanceFor[_msgSender()].push(_propertyAddress);
             balanceForCountOf[_msgSender()]++;
@@ -186,12 +185,12 @@ contract PropertyNFT is Ownable {
                         IERC20(aQRAddress),
                         true
                     );
-
                     require(IERC20(_buyWithToken).allowance(_msgSender(), address(this)) >= rate * totalUSD, "Inadequate AQR allowance");
                     require(IERC20(_buyWithToken).balanceOf(_msgSender()) >= rate * totalUSD, "Not enough balance");
 
-                    IERC20(_buyWithToken).transferFrom(_msgSender(), _propertyAddress, rate * totalUSD);
-
+                    require(IERC20(_buyWithToken).transferFrom(_msgSender(), _propertyAddress, rate * totalUSD), "Transfer failed");
+                    propertyToken.buyToken(_amount, _msgSender());
+                    
                     success = true;
                     emit BuyShares(_propertyAddress, _msgSender(), _buyWithToken, _amount);
                 }
@@ -199,6 +198,9 @@ contract PropertyNFT is Ownable {
                 uint256 token = totalUSD.div(ethPrice);
                 require(token <= IERC20(_buyWithToken).allowance(_msgSender(), address(this)), "Tokens not approved enough");
                 require(token <= IERC20(_buyWithToken).balanceOf(_msgSender()), "Not enough balance");
+                
+                require(IERC20(_buyWithToken).transferFrom(_msgSender(), _propertyAddress, token), "Transfer failed");
+                propertyToken.buyToken(_amount, _msgSender());
                 
                 success = true;
                 emit BuyShares(_propertyAddress, _msgSender(), _buyWithToken, _amount);
