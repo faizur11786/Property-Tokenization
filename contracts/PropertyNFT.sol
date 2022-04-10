@@ -42,8 +42,7 @@ contract PropertyNFT is Ownable {
     mapping(address => uint256) public idOf;
 
     address[] public paymentMethods;
-    
-    uint256 platformFee;
+
     address private aQRAddress;
 
     struct Properties {
@@ -69,26 +68,12 @@ contract PropertyNFT is Ownable {
         address indexed buyWithToken,
         uint256 value
     );
-    AggregatorV3Interface internal maticPriceFeed;
 
     constructor() Ownable() {
-        platformFee = 200;
-        maticPriceFeed = AggregatorV3Interface(0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada);
     }
 
     function setAQRAddress(address _aQRAddress) external onlyOwner {
         aQRAddress = _aQRAddress;
-    }
-
-    function getMaticPrice() public view returns(uint256){
-        (,int256 answer,,,) = maticPriceFeed.latestRoundData();
-         return uint256(answer * 10000000000);
-    }
-
-    function getMaticConversionRate(uint256 maticAmount) public view returns (uint256){
-        uint256 ethPrice = getMaticPrice(); // 262784346 ;
-        uint256 maticAmountInUsd = (ethPrice * maticAmount) / 1000000000000000000;
-        return maticAmountInUsd;
     }
 
     function listProperty(
@@ -98,7 +83,6 @@ contract PropertyNFT is Ownable {
         string memory _propName,
         string memory _propSymbol,
         bytes memory _propURI,
-        address _propOwner,
         bool _saleState
     ) external onlyOwner returns (bool success) {
         tokenIds.increment();
@@ -109,7 +93,7 @@ contract PropertyNFT is Ownable {
             _totalSupply,
             newTokenId_,
             _listPrice,
-            _propOwner,
+            owner(),
             _saleState
         );
         properties[newTokenId_] = Properties({
@@ -118,7 +102,7 @@ contract PropertyNFT is Ownable {
             propSymbol: _propSymbol,
             propertyURI: _propURI,
             propTotalSupply: _totalSupply,
-            propOwner: _propOwner,
+            propOwner: owner(),
             propertyAddress: address(propToken_)
         });
         idOf[address(propToken_)] = newTokenId_;
@@ -147,14 +131,13 @@ contract PropertyNFT is Ownable {
     )
         public
         payable
-        virtual 
         returns (bool success)
     {
         require(_propertyAddress != address(0), "Property address cannot be 0");
         require(_exists(idOf[_propertyAddress]), "Property does not exist");
         require(_amount % 1 == 0, "Amount must be a whole number");
         
-        IPropertyToken propertyToken = IPropertyToken(_propertyAddress);
+        PropertyTokenization propertyToken = PropertyTokenization(_propertyAddress);
 
         uint256 totalUSD = _amount * propertyToken.tokenPrice();
 
@@ -172,50 +155,48 @@ contract PropertyNFT is Ownable {
             balanceFor[_msgSender()].push(_propertyAddress);
             balanceForCountOf[_msgSender()]++;
             
-            success = true;
-
             emit BuyShares(_propertyAddress, _msgSender(), _buyWithToken, _amount);
-        }
-        // THIS MEANS WE ARE BUYING WITH A OTHER PAYMENT METHODS (ERC20)
-        for(uint256 i = 0; i < paymentMethods.length; i++) {
-            if(paymentMethods[i] == _buyWithToken) {
-                if(paymentMethods[i] == address(aQRAddress)){
-                    uint256 rate = IOracle(priceFeedOf[_buyWithToken]).getRate(
-                        IERC20(0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063),
-                        IERC20(aQRAddress),
-                        true
-                    );
-                    require(IERC20(_buyWithToken).allowance(_msgSender(), address(this)) >= rate * totalUSD, "Inadequate AQR allowance");
-                    require(IERC20(_buyWithToken).balanceOf(_msgSender()) >= rate * totalUSD, "Not enough balance");
+            success = true;
+        } else{
+            // THIS MEANS WE ARE BUYING WITH A OTHER PAYMENT METHODS (ERC20)
+            for(uint256 i = 0; i < paymentMethods.length; i++) {
+                if(paymentMethods[i] == _buyWithToken) {
+                    if(_buyWithToken == address(aQRAddress)){
+                        uint256 rate = IOracle(priceFeedOf[_buyWithToken]).getRate(
+                            IERC20(0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063),
+                            IERC20(aQRAddress),
+                            true
+                        );
+                        require(IERC20(_buyWithToken).allowance(_msgSender(), address(this)) >= rate * totalUSD, "Inadequate AQR allowance");
+                        require(IERC20(_buyWithToken).balanceOf(_msgSender()) >= rate * totalUSD, "Not enough balance");
 
-                    require(IERC20(_buyWithToken).transferFrom(_msgSender(), _propertyAddress, rate * totalUSD), "Transfer failed");
+                        require(IERC20(_buyWithToken).transferFrom(_msgSender(), _propertyAddress, rate * totalUSD), "Transfer failed");
+                        propertyToken.buyToken(_amount, _msgSender());
+                        
+                        emit BuyShares(_propertyAddress, _msgSender(), _buyWithToken, _amount);
+                        success = true;
+                    }
+                    uint256 token = totalUSD.div(ethPrice);
+                    require(token <= IERC20(_buyWithToken).allowance(_msgSender(), address(this)), "Tokens not approved enough");
+                    require(token <= IERC20(_buyWithToken).balanceOf(_msgSender()), "Not enough balance");
+                    
+                    require(IERC20(_buyWithToken).transferFrom(_msgSender(), _propertyAddress, token), "Transfer failed");
                     propertyToken.buyToken(_amount, _msgSender());
                     
-                    success = true;
                     emit BuyShares(_propertyAddress, _msgSender(), _buyWithToken, _amount);
+                    success = true;
                 }
-
-                uint256 token = totalUSD.div(ethPrice);
-                require(token <= IERC20(_buyWithToken).allowance(_msgSender(), address(this)), "Tokens not approved enough");
-                require(token <= IERC20(_buyWithToken).balanceOf(_msgSender()), "Not enough balance");
-                
-                require(IERC20(_buyWithToken).transferFrom(_msgSender(), _propertyAddress, token), "Transfer failed");
-                propertyToken.buyToken(_amount, _msgSender());
-                
-                success = true;
-                emit BuyShares(_propertyAddress, _msgSender(), _buyWithToken, _amount);
             }
         }
     }
 
-    function paymentMethodLength() public view virtual returns (uint256) {
+    function paymentMethodLength() public view returns (uint256) {
         return paymentMethods.length;
     }
 
 
     function addPaymentMethod(address[] memory newPaymentMethod, address[] memory priceFeeds)
         public
-        virtual
         onlyOwner
         returns (bool success)
     {
@@ -233,7 +214,7 @@ contract PropertyNFT is Ownable {
 
     function removePaymentMethod(uint256 _index)
         public
-        virtual
+        
         onlyOwner
         returns (bool success)
     {
@@ -266,7 +247,6 @@ contract PropertyNFT is Ownable {
     function getTokenURI(uint256 _tokenId)
         public
         view
-        virtual
         returns (string memory)
     {
         require(_exists(_tokenId), "URI query for nonexistent token");
@@ -285,7 +265,18 @@ contract PropertyNFT is Ownable {
         return true;
     }
 
-    function _exists(uint256 tokenId) internal view virtual returns (bool) {
+    function _exists(uint256 tokenId) internal view  returns (bool) {
         return properties[tokenId].propertyAddress != address(0);
+    }
+
+    function withdrawFunds(address _token) external onlyOwner returns(bool success) {
+        require(IERC20(_token).balanceOf(address(this)) > 0, "No funds to withdraw");
+        IERC20(_token).transfer(_msgSender(), IERC20(_token).balanceOf(address(this)));
+        return true;
+    }
+
+    function withdraw() public onlyOwner {
+        uint256 balance = address(this).balance;
+        payable(_msgSender()).transfer(balance);
     }
 }

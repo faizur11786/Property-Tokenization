@@ -62,11 +62,9 @@ contract PropertyTokenization is Ownable {
         propertiesNFT = _msgSender();
         availableSupply = _totalSupply;
         listPrice = _listPrice;
-        if(owner() != _propOwner){
-            transferOwnership(_propOwner);
-        }
+        transferOwnership(_propOwner);
     }
-
+    
     function tokenPrice() public view returns (uint256) {
         return listPrice.mul(1e18).div(propetyTotalSupply);
     }
@@ -75,12 +73,12 @@ contract PropertyTokenization is Ownable {
         listPrice = _listPrice;
     }
 
-    function holdersLength() public view virtual returns (uint256){
+    function holdersLength() public view returns (uint256){
         return holders.length;
     }
 
     function updateSaleTimer(uint256 time) external onlyOwner{
-        require(time > block.timestamp,"Time should be greater than now time");
+        require(time > block.timestamp, "Time should be greater than now time");
         saleTimer = time;
     }
 
@@ -88,7 +86,7 @@ contract PropertyTokenization is Ownable {
         saleState = !saleState;
     }
 
-    function buyToken(uint256 _amount, address _to) external payable virtual returns (bool success){
+    function buyToken(uint256 _amount, address _to) external payable returns (bool success){
         // require(saleTimer > block.timestamp,"Crowdsale is ended");
         require(_msgSender() == propertiesNFT, "Only owner can buy tokens");
         require(_amount > 0 && _amount <= availableSupply, "Invalid amount");
@@ -133,11 +131,11 @@ contract PropertyTokenization is Ownable {
     }
 
 
-    function balanceOf(address account) public view virtual returns (uint256) {
+    function balanceOf(address account) public view returns (uint256) {
         return _balances[account];
     }
 
-    function cBalanceOf(address account) public view virtual returns (uint256) {
+    function cBalanceOf(address account) public view returns (uint256) {
         return _cBalance[account];
     }
 
