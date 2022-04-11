@@ -7,10 +7,9 @@ import "hardhat/console.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-
 import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 
-interface IPropertyNFT {
+interface IPropertyFactory {
    function setBalanceFor(address, address) external ;
 }
 
@@ -27,8 +26,8 @@ contract PropertyTokenization is Ownable {
     mapping (address => uint256) public referrals;
     mapping (uint256 => address) public referraredBy;
 
-    string public propetyName;
-    string public propetySymbol;
+    string public name;
+    string public symbol;
     uint256 public tokenId;
     uint256 public propetyTotalSupply;
     uint256 public availableSupply;
@@ -36,7 +35,7 @@ contract PropertyTokenization is Ownable {
     uint256 public listPrice;
     bool public saleState = false;
     address[] public holders;
-    address public propertiesNFT;
+    address public propertyFactory;
     IERC20 private aQR =  IERC20(0xaE204EE82E60829A5850FE291C10bF657AF1CF02);
     IERC20 private uSDT = IERC20(0xc2132D05D31c914a87C6611C10748AEb04B58e8F);
 
@@ -53,13 +52,13 @@ contract PropertyTokenization is Ownable {
         address _propOwner, /* if you want to make someone owner of that property || _msgSender() */
         bool _saleState /* true = sale, false = not sale */
     ) Ownable() {
-        propetyName = _name;
-        propetySymbol = _symbol;
+        name = _name;
+        symbol = _symbol;
         propetyTotalSupply = _totalSupply;
         _cBalance[address(this)] = _totalSupply;
         tokenId = _tokenId;
         saleState = _saleState;
-        propertiesNFT = _msgSender();
+        propertyFactory = _msgSender();
         availableSupply = _totalSupply;
         listPrice = _listPrice;
         transferOwnership(_propOwner);
@@ -87,14 +86,14 @@ contract PropertyTokenization is Ownable {
     }
 
     function buyToken(uint256 _amount, address _to) external payable returns (bool success){
-        // require(saleTimer > block.timestamp,"Crowdsale is ended");
-        require(_msgSender() == propertiesNFT, "Only owner can buy tokens");
+        require(saleTimer > block.timestamp && saleState,"Crowdsale is ended");
+        require(_msgSender() == propertyFactory, "Only owner can buy tokens");
         require(_amount > 0 && _amount <= availableSupply, "Invalid amount");
         require(_to != address(0), "Invalid address");
         _cBalance[address(this)] -= _amount;
         _cBalance[_to] += _amount;
         availableSupply = availableSupply.sub(_amount);
-        addReferral(_to, _amount);
+        addReferral(_to, _amount * tokenPrice());
         success = true;
     }
 
@@ -186,7 +185,7 @@ contract PropertyTokenization is Ownable {
     }
 
     function _transfer(address from, address to, uint256 value) internal {
-        IPropertyNFT propertyToken = IPropertyNFT(propertiesNFT);
+        IPropertyFactory propertyToken = IPropertyFactory(propertyFactory);
         propertyToken.setBalanceFor(to, address(this));
         _balances[from] -= value;
         _balances[to] += value;

@@ -12,16 +12,6 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "./PropertyTokenization.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 
-
-interface IPropertyToken {
-    function buyToken(
-        uint256,
-        address
-    ) external payable returns (bool);
-
-    function tokenPrice() external view returns (uint256);
-}
-
 interface IOracle {
     function getRate(
         IERC20 srcToken,
@@ -30,7 +20,7 @@ interface IOracle {
     ) external view returns (uint256 weightedRate);
 }
 
-contract PropertyNFT is Ownable {
+contract PropertyFactory is Ownable {
     using Counters for Counters.Counter;
     Counters.Counter public tokenIds;
     using SafeMath for uint256;
@@ -41,9 +31,7 @@ contract PropertyNFT is Ownable {
 
     mapping(address => uint256) public idOf;
 
-    address[] public paymentMethods;
-
-    address private aQRAddress;
+    address public aQRAddress;
 
     struct Properties {
         string propId;
@@ -66,10 +54,22 @@ contract PropertyNFT is Ownable {
         address indexed token,
         address indexed to,
         address indexed buyWithToken,
-        uint256 value
+        uint256 value,
+        uint256 tokenAmount
     );
 
-    constructor() Ownable() {
+    constructor() Ownable() {}
+
+    function setBalanceFor(address _owner, address _propertyAddress) public returns(bool){
+        require(_msgSender() == _propertyAddress, "Only owner can Call");
+        balanceFor[_owner].push(_propertyAddress);
+        balanceForCountOf[_msgSender()]++;
+        return true;
+    }
+
+
+    function isPaymentMethod(address _token)  public view returns(bool) {
+        return priceFeedOf[_token] != address(0);
     }
 
     function setAQRAddress(address _aQRAddress) external onlyOwner {
@@ -124,125 +124,120 @@ contract PropertyNFT is Ownable {
         return true;
     }
 
+    function getPriceOf(address _priceFeed) public view returns (uint256) {
+        AggregatorV3Interface aggregator = AggregatorV3Interface(_priceFeed);
+        (,int256 answer,,,) = aggregator.latestRoundData();
+        uint256 ethPrice = uint256(answer) * 10 ** (18 - aggregator.decimals());
+        return ethPrice;
+    }
+
+    event BuySharesWithMatic(
+        address indexed token,
+        address indexed to,
+        uint256 value,
+        uint256 amount
+    );
+
+    function getMatic(address _propertyAddress, uint256 _amount) public view returns (uint256){
+        PropertyTokenization propertyToken = PropertyTokenization(_propertyAddress);
+        uint256 totalUSD = _amount * propertyToken.tokenPrice();
+        uint256 ethPrice = getPriceOf(0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada);
+        return (totalUSD * 1e18 / ethPrice * 1e18) / 1e18;
+    }
+
+    function buySharesWithMatic( 
+        address _propertyAddress,
+        uint256 _amount
+    ) external payable returns(bool){
+        require(_propertyAddress != address(0), "Property address cannot be 0");
+        require(_exists(idOf[_propertyAddress]), "Property does not exist");
+        require(_amount % 1 == 0, "Amount must be a whole number");
+
+        uint256 inMatic = getMatic(_propertyAddress, _amount);
+        require (inMatic <= msg.value, "Inadequate MATIC sent");
+
+        PropertyTokenization propertyToken = PropertyTokenization(_propertyAddress);
+        propertyToken.buyToken{value:msg.value}(_amount, _msgSender());
+
+        balanceFor[_msgSender()].push(_propertyAddress);
+        balanceForCountOf[_msgSender()]++;
+
+        emit BuySharesWithMatic(_propertyAddress, _msgSender(), msg.value, _amount);
+        return true;
+    }
+
     function buyShares(
         address _propertyAddress,
         uint256 _amount,
         address _buyWithToken
     )
         public
-        payable
-        returns (bool success)
+        returns (bool)
     {
         require(_propertyAddress != address(0), "Property address cannot be 0");
         require(_exists(idOf[_propertyAddress]), "Property does not exist");
         require(_amount % 1 == 0, "Amount must be a whole number");
-        
+        require(isPaymentMethod(_buyWithToken), "Payment Method not found");
+
         PropertyTokenization propertyToken = PropertyTokenization(_propertyAddress);
+        ERC20 token = ERC20(_buyWithToken);
 
         uint256 totalUSD = _amount * propertyToken.tokenPrice();
+        uint256 ethPrice = getPriceOf(priceFeedOf[_buyWithToken]);
 
-        AggregatorV3Interface aggregator = AggregatorV3Interface(priceFeedOf[_buyWithToken]);
-        (,int256 answer,,,) = aggregator.latestRoundData();
-        uint256 ethPrice = uint256(answer * 10000000000);
+        if(_buyWithToken == address(aQRAddress)){
+            uint256 rate = IOracle(priceFeedOf[_buyWithToken]).getRate(
+                IERC20(0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063),
+                IERC20(aQRAddress),
+                true
+            );
+            uint256 totalAQR = (totalUSD * rate ) / 1e18;
+            require(token.allowance(_msgSender(), address(this)) >= totalAQR, "Inadequate AQR allowance");
+            require(token.balanceOf(_msgSender()) >= totalAQR, "Not enough balance");
 
-        if( msg.value != 0 ) {
-            // THIS MEANS WE ARE BUYING WITH ETH/MATIC
-            uint256 inMatic = totalUSD.div(ethPrice);
-            require (inMatic <= msg.value && (ethPrice * msg.value).div(1e18) >= totalUSD, "Inadequate MATIC sent");
+            require(token.transferFrom(_msgSender(), _propertyAddress, totalAQR), "Transfer failed");
+            propertyToken.buyToken(_amount, _msgSender());
 
-            propertyToken.buyToken{value:msg.value}(_amount, _msgSender());
-            
             balanceFor[_msgSender()].push(_propertyAddress);
             balanceForCountOf[_msgSender()]++;
-            
-            emit BuyShares(_propertyAddress, _msgSender(), _buyWithToken, _amount);
-            success = true;
-        } else{
-            // THIS MEANS WE ARE BUYING WITH A OTHER PAYMENT METHODS (ERC20)
-            for(uint256 i = 0; i < paymentMethods.length; i++) {
-                if(paymentMethods[i] == _buyWithToken) {
-                    if(_buyWithToken == address(aQRAddress)){
-                        uint256 rate = IOracle(priceFeedOf[_buyWithToken]).getRate(
-                            IERC20(0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063),
-                            IERC20(aQRAddress),
-                            true
-                        );
-                        require(IERC20(_buyWithToken).allowance(_msgSender(), address(this)) >= rate * totalUSD, "Inadequate AQR allowance");
-                        require(IERC20(_buyWithToken).balanceOf(_msgSender()) >= rate * totalUSD, "Not enough balance");
 
-                        require(IERC20(_buyWithToken).transferFrom(_msgSender(), _propertyAddress, rate * totalUSD), "Transfer failed");
-                        propertyToken.buyToken(_amount, _msgSender());
-                        
-                        emit BuyShares(_propertyAddress, _msgSender(), _buyWithToken, _amount);
-                        success = true;
-                    }
-                    uint256 token = totalUSD.div(ethPrice);
-                    require(token <= IERC20(_buyWithToken).allowance(_msgSender(), address(this)), "Tokens not approved enough");
-                    require(token <= IERC20(_buyWithToken).balanceOf(_msgSender()), "Not enough balance");
-                    
-                    require(IERC20(_buyWithToken).transferFrom(_msgSender(), _propertyAddress, token), "Transfer failed");
-                    propertyToken.buyToken(_amount, _msgSender());
-                    
-                    emit BuyShares(_propertyAddress, _msgSender(), _buyWithToken, _amount);
-                    success = true;
-                }
-            }
+            emit BuyShares(_propertyAddress, _msgSender(), _buyWithToken, _amount, totalAQR);
+            return true;
         }
-    }
+        
+        uint256 tokens = (totalUSD * 1e18 / ethPrice * 1e18) / 1e18;
+        require(tokens <= token.allowance(_msgSender(), address(this)), "Tokens not approved enough");
+        require(tokens <= token.balanceOf(_msgSender()), "Not enough balance");
+        
+        require(token.transferFrom(_msgSender(), _propertyAddress, tokens), "Transfer failed");
+        propertyToken.buyToken(_amount, _msgSender());
 
-    function paymentMethodLength() public view returns (uint256) {
-        return paymentMethods.length;
-    }
-
-
-    function addPaymentMethod(address[] memory newPaymentMethod, address[] memory priceFeeds)
-        public
-        onlyOwner
-        returns (bool success)
-    {
-        require(
-            newPaymentMethod.length == priceFeeds.length,
-            "Length of payment methods and price feeds must be equal"
-        );
-        for (uint256 i = 0; i < newPaymentMethod.length; i++) {
-            require(newPaymentMethod[i] != address(0), "Invalid address");
-            priceFeedOf[newPaymentMethod[i]] = priceFeeds[i];
-            _addPaymentMethod(newPaymentMethod[i]);
-        }
+        balanceFor[_msgSender()].push(_propertyAddress);
+        balanceForCountOf[_msgSender()]++;
+        
+        emit BuyShares(_propertyAddress, _msgSender(), _buyWithToken, _amount, tokens);
         return true;
     }
 
-    function removePaymentMethod(uint256 _index)
-        public
-        
+    function addPaymentMethod(address paymentMethod, address priceFeeds)
+        external
         onlyOwner
         returns (bool success)
     {
-        require(_index < paymentMethods.length, "Index out of bounds");
-        priceFeedOf[paymentMethods[_index]] = address(0);
-        for (uint256 i = _index; i < paymentMethods.length - 1; i++) {
-            paymentMethods[i] = paymentMethods[i + 1];
-        }
-        paymentMethods.pop();
+        require(paymentMethod != address(0), "Invalid address");
+        priceFeedOf[paymentMethod] = priceFeeds;
+        return true;
+    }
+
+    function removePaymentMethod(address paymentMethod)
+        external
+        onlyOwner
+        returns (bool success)
+    {
+        priceFeedOf[paymentMethod] = address(0);
         success = true;
     }
 
-
-    function _addPaymentMethod(address newPaymentMethod)
-        internal
-        returns (bool success)
-    {
-        if (paymentMethods.length == 0) {
-            paymentMethods.push(newPaymentMethod);
-        } else {
-            for (uint256 i = 0; i < paymentMethods.length; i++) {
-                if (paymentMethods[i] != newPaymentMethod) {
-                    paymentMethods.push(newPaymentMethod);
-                    return true;
-                }
-            }
-        }
-    }
 
     function getTokenURI(uint256 _tokenId)
         public
