@@ -9,8 +9,9 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "./PropertyTokenization.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import "./PropertyTokenization.sol";
 
 interface IOracle {
     function getRate(
@@ -20,11 +21,11 @@ interface IOracle {
     ) external view returns (uint256 weightedRate);
 }
 
-contract PropertyFactory is Ownable {
+contract PropertyFactory is Ownable, ReentrancyGuard {
     using Counters for Counters.Counter;
     Counters.Counter public tokenIds;
     using SafeMath for uint256;
-    
+
     mapping(address => address[]) public balanceFor;
     mapping(address => uint256) public balanceForCountOf;
     mapping(address => address) public priceFeedOf;
@@ -57,10 +58,16 @@ contract PropertyFactory is Ownable {
         uint256 value,
         uint256 tokenAmount
     );
+    event BuySharesWithMatic(
+        address indexed token,
+        address indexed to,
+        uint256 value,
+        uint256 amount
+    );
 
-    constructor() Ownable() {}
+    constructor() Ownable() ReentrancyGuard() {}
 
-    function setBalanceFor(address _owner, address _propertyAddress) public returns(bool){
+    function setBalanceFor(address _owner, address _propertyAddress) external nonReentrant returns(bool){
         require(_msgSender() == _propertyAddress, "Only owner can Call");
         balanceFor[_owner].push(_propertyAddress);
         balanceForCountOf[_msgSender()]++;
@@ -82,8 +89,7 @@ contract PropertyFactory is Ownable {
         string memory _propId,
         string memory _propName,
         string memory _propSymbol,
-        bytes memory _propURI,
-        bool _saleState
+        bytes memory _propURI
     ) external onlyOwner returns (bool success) {
         tokenIds.increment();
         uint256 newTokenId_ = tokenIds.current();
@@ -93,8 +99,7 @@ contract PropertyFactory is Ownable {
             _totalSupply,
             newTokenId_,
             _listPrice,
-            owner(),
-            _saleState
+            owner()
         );
         properties[newTokenId_] = Properties({
             propId: _propId,
@@ -131,13 +136,6 @@ contract PropertyFactory is Ownable {
         return ethPrice;
     }
 
-    event BuySharesWithMatic(
-        address indexed token,
-        address indexed to,
-        uint256 value,
-        uint256 amount
-    );
-
     function getMatic(address _propertyAddress, uint256 _amount) public view returns (uint256){
         PropertyTokenization propertyToken = PropertyTokenization(_propertyAddress);
         uint256 totalUSD = _amount * propertyToken.tokenPrice();
@@ -148,7 +146,7 @@ contract PropertyFactory is Ownable {
     function buySharesWithMatic( 
         address _propertyAddress,
         uint256 _amount
-    ) external payable returns(bool){
+    ) external payable nonReentrant returns(bool){
         require(_propertyAddress != address(0), "Property address cannot be 0");
         require(_exists(idOf[_propertyAddress]), "Property does not exist");
         require(_amount % 1 == 0, "Amount must be a whole number");
@@ -157,6 +155,8 @@ contract PropertyFactory is Ownable {
         require (inMatic <= msg.value, "Inadequate MATIC sent");
 
         PropertyTokenization propertyToken = PropertyTokenization(_propertyAddress);
+        require(propertyToken.isEligibleToBuy(_msgSender()), "Not eligible to buy");
+
         propertyToken.buyToken{value:msg.value}(_amount, _msgSender());
 
         balanceFor[_msgSender()].push(_propertyAddress);
@@ -172,6 +172,7 @@ contract PropertyFactory is Ownable {
         address _buyWithToken
     )
         public
+        nonReentrant
         returns (bool)
     {
         require(_propertyAddress != address(0), "Property address cannot be 0");
@@ -180,6 +181,8 @@ contract PropertyFactory is Ownable {
         require(isPaymentMethod(_buyWithToken), "Payment Method not found");
 
         PropertyTokenization propertyToken = PropertyTokenization(_propertyAddress);
+        require(propertyToken.isEligibleToBuy(_msgSender()), "Not eligible to buy");
+        
         ERC20 token = ERC20(_buyWithToken);
 
         uint256 totalUSD = _amount * propertyToken.tokenPrice();
@@ -249,7 +252,7 @@ contract PropertyFactory is Ownable {
     }
 
     function setTokenURI(uint256 _tokenId, bytes memory _data)
-        public
+        external
         view
         onlyOwner
         returns (bool)
@@ -260,17 +263,16 @@ contract PropertyFactory is Ownable {
         return true;
     }
 
-    function _exists(uint256 tokenId) internal view  returns (bool) {
+    function _exists(uint256 tokenId) internal view returns (bool) {
         return properties[tokenId].propertyAddress != address(0);
     }
 
-    function withdrawFunds(address _token) external onlyOwner returns(bool success) {
+    function withdrawFunds(address _token) external onlyOwner nonReentrant {
         require(IERC20(_token).balanceOf(address(this)) > 0, "No funds to withdraw");
         IERC20(_token).transfer(_msgSender(), IERC20(_token).balanceOf(address(this)));
-        return true;
     }
 
-    function withdraw() public onlyOwner {
+    function withdraw() external onlyOwner nonReentrant {
         uint256 balance = address(this).balance;
         payable(_msgSender()).transfer(balance);
     }
