@@ -17,8 +17,6 @@ interface IPropertyFactory {
 
 contract PropertyTokenization is Ownable, ReentrancyGuard {
     using SafeMath for uint256;
-
-
     bytes private pROSTATE = "ACTIVE";
 
     modifier onlyActive{
@@ -89,11 +87,21 @@ contract PropertyTokenization is Ownable, ReentrancyGuard {
     }
 
     function isEligibleToBuy(address _address, uint256 _amount) public view returns(bool) {
-        return whitelist[_address].requested >= _amount;
+        uint256 amount_ = whitelist[_address].requested - whitelist[_address].boughted;
+        return amount_ >= _amount;
     }
 
-    function eligibleToBuy(address _address, uint256 _amount) public returns(bool){
-        whitelist[_address].requested = _amount;
+    function _boughted(address _address, uint256 _amount) internal returns (bool) { 
+        whitelist[_address].boughted = _amount;
+        return true;
+    }
+
+    function batchEligibleToBuy(address[] calldata _address, uint256[] calldata _amount) public returns(bool){
+        require(_address.length == _amount.length, "Length should be same");
+        for(uint256 i = 0; i < _address.length; i++){
+            require(_address[i] != address(0), "invalid address");
+            whitelist[_address[i]].requested = _amount[i];
+        }
         return true;
     }
     
@@ -120,8 +128,9 @@ contract PropertyTokenization is Ownable, ReentrancyGuard {
         _cBalance[address(this)] -= _amount;
         _cBalance[_to] += _amount;
         availableSupply = availableSupply.sub(_amount);
-        eligibleToBuy(_to, _amount);
+        _boughted(_to, _amount);
         _addReferral(_to, _amount * tokenPrice());
+        holders.push(_to);
         success = true;
     }
 

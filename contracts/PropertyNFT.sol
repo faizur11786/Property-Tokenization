@@ -155,7 +155,7 @@ contract PropertyFactory is Ownable, ReentrancyGuard {
         require (inMatic <= msg.value, "Inadequate MATIC sent");
 
         PropertyTokenization propertyToken = PropertyTokenization(_propertyAddress);
-        require(propertyToken.isEligibleToBuy(_msgSender()), "Not eligible to buy");
+        require(propertyToken.isEligibleToBuy(_msgSender(), _amount), "Not eligible to buy");
 
         propertyToken.buyToken{value:msg.value}(_amount, _msgSender());
 
@@ -181,7 +181,7 @@ contract PropertyFactory is Ownable, ReentrancyGuard {
         require(isPaymentMethod(_buyWithToken), "Payment Method not found");
 
         PropertyTokenization propertyToken = PropertyTokenization(_propertyAddress);
-        require(propertyToken.isEligibleToBuy(_msgSender()), "Not eligible to buy");
+        require(propertyToken.isEligibleToBuy(_msgSender(), _amount), "Not eligible to buy");
         
         ERC20 token = ERC20(_buyWithToken);
 
